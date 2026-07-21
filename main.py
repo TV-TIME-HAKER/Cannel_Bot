@@ -56,16 +56,6 @@ def update_log_report():
     else:
         text_report += "_Нет активных шаблонов (отправьте текст в ЛС боту)_\n"
 
-    text_report += "\n📈 **Статистика переходов по постам:**\n"
-    total_clicks = 0
-    if active_links:
-        for link, info in active_links.items():
-            text_report += f"🔗 {info['name']}: {info['clicks']} чел. ({link})\n"
-            total_clicks += info['clicks']
-        text_report += f"\n**Всего переходов:** {total_clicks} чел.\n"
-    else:
-        text_report += "_Постов со ссылками пока не создано_\n"
-
     # Прячем JSON со структурой данных в самый низ сообщения
     service_data = {"templates": saved_templates, "links": active_links}
     final_text = f"{text_report}\n\n`--- СЛУЖЕБНЫЕ ДАННЫЕ ---`\n`{json.dumps(service_data)}`"
@@ -113,12 +103,6 @@ def handle_private_messages(message):
         bot.reply_to(message, "Все шаблоны ссылок успешно удалены!")
         return
 
-    if message.text == "/stats":
-        sync_from_telegram()
-        total = sum(info['clicks'] for info in active_links.values())
-        bot.reply_to(message, f"📈 Всего переходов по ссылкам во все время: **{total}**", parse_mode="Markdown")
-        return
-
     # Сохраняем присланный текст/ссылку как шаблон
     saved_templates.append({
         "text": message.text,
@@ -127,8 +111,6 @@ def handle_private_messages(message):
     update_log_report()
     bot.reply_to(message, f"Шаблон сохранен! Всего шаблонов в буфере: {len(saved_templates)}")
 
-
-# --- 5. ОБРАБОТКА ПОСТОВ В КАНАЛЕ ---
 # --- 5. ОБРАБОТКА ПОСТОВ В КАНАЛЕ ---
 @bot.channel_post_handler(content_types=['photo', 'video'])
 def handle_channel_post(message):
@@ -191,26 +173,6 @@ def handle_channel_post(message):
         )
     except Exception as e:
         print(f"Ошибка автоматического изменения поста: {e}")
-
-
-# --- 6. ОТСЛЕЖИВАНИЕ НОВЫХ ПОДПИСЧИКОВ ---
-@bot.chat_member_handler()
-def chat_member_updates(update):
-    global active_links
-    # Проверяем, что пользователь именно вступил в канал, а не вышел
-    if update.new_chat_member.status == "member" and update.old_chat_member.status in ["left", "kicked",
-                                                                                       "left_chat_member"]:
-        invite_link_obj = update.invite_link
-
-        if invite_link_obj and invite_link_obj.invite_link:
-            # Обновляем данные из Telegram на случай, если сервер перезапускался
-            sync_from_telegram()
-
-            link_str = invite_link_obj.invite_link
-            if link_str in active_links:
-                active_links[link_str]["clicks"] += 1
-                # Сохраняем измененный счетчик кликов в закрепленный отчет
-                update_log_report()
 
 
 # --- 7. ЗАПУСК БОТА И ФЛАСКА В ДВА ПОТОКА ---
