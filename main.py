@@ -135,11 +135,26 @@ def handle_private_messages(message):
     bot.reply_to(message, f"✅ Анкор добавлен! Всего строк в шапке: {len(saved_templates)}")
 
 
+# Измененный словарь для защиты от двойного срабатывания на один и тот же альбом
+processed_albums = set()
+
 # --- 5. ОБРАБОТКА ПОСТОВ В КАНАЛЕ (Добавление шапки) ---
 @bot.channel_post_handler(content_types=['photo', 'video'])
 def handle_channel_post(message):
     if message.chat.id != CHANNEL_ID or not saved_templates:
         return
+
+    # Проверка: если это альбом (медиагруппа)
+    if message.media_group_id:
+        # Если мы уже обрабатываем этот альбом, пропускаем остальные фото из него,
+        # так как подпись в Telegram всегда привязана только к первому файлу альбома.
+        if message.media_group_id in processed_albums:
+            return
+        processed_albums.add(message.media_group_id)
+        
+        # Очищаем старые ID альбомов из памяти, чтобы она не переполнялась (храним последние 100)
+        if len(processed_albums) > 100:
+            processed_albums.pop()
 
     links_header = ""
     final_entities = []
@@ -149,25 +164,26 @@ def handle_channel_post(message):
         if template["text"]:
             current_offset = len(links_header)
             links_header += template["text"] + "\n"
-
+            
             if template["entities"]:
                 for ent_dict in template["entities"]:
                     ent = telebot.types.MessageEntity.de_json(ent_dict)
                     ent.offset += current_offset
                     final_entities.append(ent)
-
-    links_header += "\n"  # Отступ перед основным текстом
-
+                    
+    links_header += "\n" # Отступ перед основным текстом
+    
     original_caption = message.caption if message.caption else ""
     caption_offset = len(links_header)
     final_caption = f"{links_header}{original_caption}"
-
+    
     if message.caption_entities:
         for ent in message.caption_entities:
             ent.offset += caption_offset
             final_entities.append(ent)
 
     try:
+        # Редактируем подпись
         bot.edit_message_caption(
             chat_id=message.chat.id,
             message_id=message.message_id,
@@ -176,6 +192,7 @@ def handle_channel_post(message):
         )
     except Exception as e:
         print(f"Ошибка изменения поста в канале: {e}")
+
 
 
 # --- 6. ЗАПУСК ВСЕЙ СИСТЕМЫ ---
