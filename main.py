@@ -18,7 +18,7 @@ def run_flask():
     app.run(host="0.0.0.0", port=port)
 
 
-# --- 2. ИНИЦИАЛИЗАЦИЯ БОТА И ПЕРЕМЕННЫХ ---
+# --- 2. ИНИЦИАЛИЗАЦИЯ БОТА, ПЕРЕМЕННЫХ ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID"))
