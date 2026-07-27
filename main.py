@@ -4,202 +4,320 @@ import threading
 import telebot
 from flask import Flask
 
-# --- 1. НАСТРОЙКА FLASK (Для прохождения проверки Render) ---
+# --- 1. НАСТРОЙКА FLASK (Для Render) ---
 app = Flask(__name__)
-
 
 @app.route('/')
 def home():
-    return "Бот работает стабильно, безопасно и бесплатно!", 200
-
+    return "Центральная сеть мультиботов активна!", 200
 
 def run_flask():
     port = int(os.getenv("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
 
-# --- 2. ИНИЦИАЛИЗАЦИЯ БОТА, ПЕРЕМЕННЫХ ---
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
-LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID"))
+# --- 2. ГЛОБАЛЬНЫЕ НАСТРОЙКИ ГЛАВНОГО БОТА (ОТЦА) ---
+MAIN_BOT_TOKEN = os.getenv("BOT_TOKEN")  
+MAIN_ADMIN_ID = int(os.getenv("ADMIN_ID", 0))  # ID создателя всей сети (нужен только для добавления новых ботов в ЛС Отца)
+MAIN_LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID"))  
 
-# ВАЖНО: Укажите ваш Telegram ID (число) прямо тут или через переменную окружения
-# Если хотите через Render, добавьте переменную ADMIN_ID. Если нет — просто замените os.getenv(...) на ваш ID, например: ADMIN_ID = 12345678
-ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+main_bot = telebot.TeleBot(MAIN_BOT_TOKEN)
 
-bot = telebot.TeleBot(BOT_TOKEN)
+# Структура базы данных в памяти
+system_data = {
+    "bots": {},       # { TOKEN: {"channel_id": int, "log_chat_id": int, "admin_id": int/None, "templates": [...] } }
+    "user_states": {} 
+}
 
-# Временный буфер шаблонов (восстанавливается из лог-чата)
-saved_templates = []
-
-
-# --- 3. СЛУЖЕБНЫЕ ФУНКЦИИ (Сохранение шаблонов в лог-чат) ---
-def parse_report_message(text):
-    """Извлекает шаблоны из закрепленного сообщения после перезапуска."""
-    global saved_templates
-    try:
-        if "--- СЛУЖЕБНЫЕ ДАННЫЕ ---" in text:
-            json_data = text.split("--- СЛУЖЕБНЫЕ ДАННЫЕ ---")[1].strip()
-            data = json.loads(json_data)
-            saved_templates = data.get("templates", [])
-    except Exception as e:
-        print(f"Ошибка чтения данных из отчета: {e}")
+active_bot_instances = {}
 
 
-def update_log_report():
-    """Обновляет закрепленный список шаблонов в лог-чате."""
-    text_report = "📝 **АКТУАЛЬНАЯ ШАПКА ДЛЯ КАНАЛА:**\n\n"
-    if saved_templates:
-        for i, t in enumerate(saved_templates, 1):
-            text_report += f"{i}. {t['text'][:40]}...\n"
-    else:
-        text_report += "_Шапка пуста. Отправьте анкоры боту в ЛС._\n"
+# --- 3. СИНХРОНИЗАЦИЯ ЧЕРЕЗ ТЕЛЕГРАМ ---
+def save_system_state():
+    """Сохраняет структуру всей сети в закреп главного лога Отца."""
+    text_report = "👑 **ЦЕНТРАЛЬНАЯ СЕТЬ МУЛЬТИБОТОВ**\n\n"
+    text_report += f"🤖 Всего ботов в системе: {len(system_data['bots'])}\n"
+    
+    for token, info in system_data['bots'].items():
+        masked_token = token[:10] + "..." + token[-5:]
+        admin_info = f"`{info['admin_id']}`" if info.get("admin_id") else "_Ожидает админа_"
+        text_report += f"🔹 Бот: `{masked_token}`\n├ Канал: `{info['channel_id']}`\n└ Админ: {admin_info}\n\n"
 
-    service_data = {"templates": saved_templates}
-    final_text = f"{text_report}\n\n`--- СЛУЖЕБНЫЕ ДАННЫЕ ---`\n`{json.dumps(service_data)}`"
+    final_text = f"{text_report}\n\n`--- СЛУЖЕБНЫЕ ДАННЫЕ ---`\n`{json.dumps(system_data['bots'])}`"
 
     try:
-        chat = bot.get_chat(LOG_CHAT_ID)
+        chat = main_bot.get_chat(MAIN_LOG_CHAT_ID)
         pinned_msg = chat.pinned_message
-
-        if pinned_msg and pinned_msg.from_user.id == bot.get_me().id:
-            bot.edit_message_text(chat_id=LOG_CHAT_ID, message_id=pinned_msg.message_id, text=final_text,
-                                  parse_mode="Markdown")
+        if pinned_msg and pinned_msg.from_user.id == main_bot.get_me().id:
+            main_bot.edit_message_text(chat_id=MAIN_LOG_CHAT_ID, message_id=pinned_msg.message_id, text=final_text, parse_mode="Markdown")
         else:
-            msg = bot.send_message(LOG_CHAT_ID, final_text, parse_mode="Markdown")
-            bot.pin_chat_message(LOG_CHAT_ID, msg.message_id)
+            msg = main_bot.send_message(MAIN_LOG_CHAT_ID, final_text, parse_mode="Markdown")
+            main_bot.pin_chat_message(MAIN_LOG_CHAT_ID, msg.message_id)
     except Exception as e:
-        print(f"Ошибка обновления отчета в Telegram: {e}")
+        print(f"[Система] Ошибка сохранения состояния Отца: {e}")
 
-
-def sync_from_telegram():
-    """Синхронизирует шаблоны при старте."""
-    try:
-        chat = bot.get_chat(LOG_CHAT_ID)
-        pinned_msg = chat.pinned_message
-        if pinned_msg and pinned_msg.from_user.id == bot.get_me().id:
-            parse_report_message(pinned_msg.text)
-            print("Шаблоны успешно восстановлены!")
-    except Exception as e:
-        print(f"Не удалось восстановить шаблоны при старте: {e}")
-
-
-sync_from_telegram()
-
-
-# --- 4. ОБРАБОТКА КОМАНД И ЛС (Доступ только для ADMIN_ID) ---
-
-# Функция-фильтр: проверяет, от админа ли сообщение
-def is_admin(message):
-    return message.from_user.id == ADMIN_ID
-
-
-@bot.message_handler(commands=['start'], chat_types=['private'])
-def send_welcome(message):
-    if not is_admin(message):
-        bot.reply_to(message, "❌ Доступ ограничен. Вы не являетесь администратором этого бота. Усли вы Александр то ИДИ НАХУЙ НЕЧЕГО МНЕ ТУТ ШАБЛОНЫ ДОБАВЛЯТЬ")
+def update_child_log_report(token):
+    """Обновляет персональный лог-чат конкретного бота-сына."""
+    bot_config = system_data["bots"].get(token)
+    if not bot_config or not bot_config.get("log_chat_id"):
         return
 
-    bot.reply_to(
+    child_bot = telebot.TeleBot(token)
+    text_report = "📝 **АКТУАЛЬНАЯ ШАПКА ДЛЯ ЭТОГО КАНАЛА:**\n\n"
+    
+    if bot_config["templates"]:
+        for i, t in enumerate(bot_config["templates"], 1):
+            text_report += f"{i}. {t['text'][:40]}...\n"
+    else:
+        text_report += "_Шапка пуста. Отправьте анкоры этому боту в ЛС._\n"
+
+    admin_status = f"`{bot_config['admin_id']}`" if bot_config.get("admin_id") else "_Не назначен_"
+    final_text = f"{text_report}\n\n`--- ДАННЫЕ БОТА ---`\n`Хозяин бота: {admin_status}`\n`Шаблонов: {len(bot_config['templates'])}`"
+
+    try:
+        chat = child_bot.get_chat(bot_config["log_chat_id"])
+        pinned_msg = chat.pinned_message
+        if pinned_msg and pinned_msg.from_user.id == child_bot.get_me().id:
+            child_bot.edit_message_text(chat_id=bot_config["log_chat_id"], message_id=pinned_msg.message_id, text=final_text, parse_mode="Markdown")
+        else:
+            msg = child_bot.send_message(bot_config["log_chat_id"], final_text, parse_mode="Markdown")
+            child_bot.pin_chat_message(bot_config["log_chat_id"], msg.message_id)
+    except Exception as e:
+        print(f"[{token[:5]}] Ошибка обновления личного лог-чата: {e}")
+
+def load_and_start_system():
+    """Считывает настройки при старте Render и поднимает всех ботов."""
+    global system_data
+    try:
+        chat = main_bot.get_chat(MAIN_LOG_CHAT_ID)
+        pinned_msg = chat.pinned_message
+        if pinned_msg and pinned_msg.from_user.id == main_bot.get_me().id:
+            if "--- СЛУЖЕБНЫЕ ДАННЫЕ ---" in pinned_msg.text:
+                json_data = pinned_msg.text.split("--- СЛУЖЕБНЫЕ ДАННЫЕ ---").strip()
+                system_data["bots"] = json.loads(json_data)
+                print(f"[Система] Восстановлено ботов: {len(system_data['bots'])}")
+                
+                for token in system_data["bots"]:
+                    start_child_bot_thread(token)
+    except Exception as e:
+        print(f"[Система] Ошибка загрузки сети при старте: {e}")
+
+
+# --- 4. ДВИЖОК ДЛЯ БОТОВ-СЫНОВЕЙ ---
+processed_albums = set()
+
+def child_bot_worker(token):
+    bot = telebot.TeleBot(token)
+    
+    @bot.channel_post_handler(content_types=['photo', 'video'])
+    def handle_child_channel_post(message):
+        bot_config = system_data["bots"].get(token)
+        if not bot_config or message.chat.id != bot_config["channel_id"] or not bot_config["templates"]:
+            return
+
+        if message.media_group_id:
+            if message.media_group_id in processed_albums: return
+            processed_albums.add(message.media_group_id)
+            if len(processed_albums) > 200: processed_albums.clear()
+
+        links_header = ""
+        final_entities = []
+
+        for template in bot_config["templates"]:
+            if template["text"]:
+                current_offset = len(links_header)
+                links_header += template["text"] + "\n"
+                if template["entities"]:
+                    for ent_dict in template["entities"]:
+                        ent = telebot.types.MessageEntity.de_json(ent_dict)
+                        ent.offset += current_offset
+                        final_entities.append(ent)
+                        
+        links_header += "\n"
+        original_caption = message.caption if message.caption else ""
+        caption_offset = len(links_header)
+        final_caption = f"{links_header}{original_caption}"
+        
+        if message.caption_entities:
+            for ent in message.caption_entities:
+                ent.offset += caption_offset
+                final_entities.append(ent)
+
+        try:
+            bot.edit_message_caption(
+                chat_id=message.chat.id, message_id=message.message_id,
+                caption=final_caption, caption_entities=final_entities
+            )
+        except Exception as e:
+            print(f"[{token[:5]}] Ошибка изменения поста: {e}")
+
+    @bot.message_handler(chat_types=['private'])
+    def handle_child_private(message):
+        bot_config = system_data["bots"].get(token)
+        if not bot_config: return
+
+        user_id = message.from_user.id
+
+        # ЛОГИКА АВТОМАТИЧЕСКОГО НАЗНАЧЕНИЯ АДМИНА ТАКУМУ БОТУ
+        if message.text == "/start":
+            # Если у бота вообще еще нет админа — текущий пользователь становится его хозяином!
+            if not bot_config.get("admin_id"):
+                bot_config["admin_id"] = user_id
+                save_system_state()
+                update_child_log_report(token)
+                bot.reply_to(message, "👑 **Вы успешно авторизованы как единственный хозяин этого бота!**\n\nТеперь отправляйте мне анкоры, и я буду ставить их в шапку вашего канала.")
+                return
+            
+            # Если админ уже есть, но пишет чужой человек
+            if bot_config["admin_id"] != user_id:
+                bot.reply_to(message, "❌ У этого бота уже есть хозяин. Доступ заблокирован.")
+                return
+
+            # Если пишет законный админ
+            bot.reply_to(message, f"🟢 Бот работает!\nКанал: `{bot_config['channel_id']}`\nЛог-чат: `{bot_config['log_chat_id']}`\nСтрок в шапке: {len(bot_config['templates'])}", parse_mode="Markdown")
+            return
+
+        # Защита: если пишет не админ бота — полностью игнорируем
+        if bot_config.get("admin_id") != user_id:
+            return
+
+        if message.text == "/clear":
+            bot_config["templates"].clear()
+            save_system_state()
+            update_child_log_report(token)
+            bot.reply_to(message, "🗑️ Шапка этого конкретного канала очищена!")
+            return
+
+        bot_config["templates"].append({
+            "text": message.text,
+            "entities": [e.__dict__ for e in message.entities] if message.entities else []
+        })
+        save_system_state()
+        update_child_log_report(token)
+        bot.reply_to(message, f"✅ Анкор добавлен для этого канала! Всего строк: {len(bot_config['templates'])}")
+
+    try:
+        bot.infinity_polling(allowed_updates=["message", "channel_post"])
+    except Exception as e:
+        print(f"Ошибка пуллинга бота {token[:5]}: {e}")
+
+def start_child_bot_thread(token):
+    if token in active_bot_instances: return
+    t = threading.Thread(target=child_bot_worker, args=(token,))
+    t.daemon = True
+    t.start()
+    active_bot_instances[token] = t
+
+
+# --- 5. УПРАВЛЕНИЕ СЕТЬЮ ЧЕРЕЗ ЛС ОТЦА (Только MAIN_ADMIN_ID) ---
+def is_main_admin(message):
+    return message.from_user.id == MAIN_ADMIN_ID
+
+@main_bot.message_handler(commands=['start'], chat_types=['private'])
+def main_welcome(message):
+    if not is_main_admin(message): return
+    main_bot.reply_to(
         message,
-        "👋 **Привет, Босс! Бот успешно работает и готов к командам.**\n\n"
-        "📜 **Как управлять шапкой:**\n"
-        "1. Просто отправьте мне текст с синей ссылкой (анкор) — он добавится в шапку.\n"
-        "2. Отправьте еще один — он встанет на следующую строку.\n"
-        "3. Команда `/clear` — полностью очистит всю шапку.\n\n"
-        "STATUS: 🟢 В СЕТИ (ONLINE)",
+        "👑 **Панель Сети Мультиботов (Отец)**\n\n"
+        "➕ `/add_bot` — подключить нового бота в сеть\n"
+        "❌ `/delete_bot` — удалить бота\n"
+        "📋 `/list` — список всех запущенных ботов\n",
         parse_mode="Markdown"
     )
 
+@main_bot.message_handler(commands=['list'], chat_types=['private'])
+def main_list(message):
+    if not is_main_admin(message): return
+    if not system_data["bots"]:
+        main_bot.reply_to(message, "Сеть пуста.")
+        return
+    res = "📋 **Список ботов в сети:**\n\n"
+    for token, info in system_data["bots"].items():
+        admin_info = f"`{info['admin_id']}`" if info.get("admin_id") else "_Ожидает активации_"
+        res += f"🤖 `{token[:10]}...`\n├ Канал: `{info['channel_id']}`\n├ Лог-чат: `{info['log_chat_id']}`\n└ Админ: {admin_info}\n\n"
+    main_bot.reply_to(message, res, parse_mode="Markdown")
 
-@bot.message_handler(chat_types=['private'])
-def handle_private_messages(message):
-    global saved_templates
+@main_bot.message_handler(commands=['add_bot'], chat_types=['private'])
+def main_add_bot(message):
+    if not is_main_admin(message): return
+    system_data["user_states"][message.from_user.id] = {"step": "waiting_token"}
+    main_bot.reply_to(message, "Шаг 1: Отправьте **API Token** бота из @BotFather.")
 
-    # Игнорируем всех, кроме админа
-    if not is_admin(message):
+@main_bot.message_handler(commands=['delete_bot'], chat_types=['private'])
+def main_delete_bot(message):
+    if not is_main_admin(message): return
+    system_data["user_states"][message.from_user.id] = {"step": "waiting_delete_token"}
+    main_bot.reply_to(message, "Отправьте API Токен бота для удаления.")
+
+@main_bot.message_handler(chat_types=['private'])
+def main_router(message):
+    if not is_main_admin(message): return
+    user_id = message.from_user.id
+    state = system_data["user_states"].get(user_id)
+    if not state: return
+
+    if state["step"] == "waiting_token":
+        state["temp_token"] = message.text.strip()
+        state["step"] = "waiting_channel"
+        main_bot.reply_to(message, "✅ Токен принят.\n\nШаг 2: Отправьте **ID КАНАЛА** (число со знаком минус).")
         return
 
-    if message.text == "/clear":
-        saved_templates.clear()
-        update_log_report()
-        bot.reply_to(message, "🗑️ Вся рекламная шапка успешно очищена!")
+    if state["step"] == "waiting_channel":
+        try:
+            state["temp_channel"] = int(message.text.strip())
+            state["step"] = "waiting_log"
+            main_bot.reply_to(message, "✅ ID канала принят.\n\nШаг 3: Отправьте **ID ЛОГ-ЧАТА** для этого бота (число со знаком минус).")
+        except ValueError:
+            main_bot.reply_to(message, "ID канала должно быть числом. Попробуйте еще раз:")
         return
 
-    # Сохраняем присланный анкор
-    saved_templates.append({
-        "text": message.text,
-        "entities": [e.__dict__ for e in message.entities] if message.entities else []
-    })
-    update_log_report()
-    bot.reply_to(message, f"✅ Анкор добавлен! Всего строк в шапке: {len(saved_templates)}")
-
-
-# Измененный словарь для защиты от двойного срабатывания на один и тот же альбом
-processed_albums = set()
-
-# --- 5. ОБРАБОТКА ПОСТОВ В КАНАЛЕ (Добавление шапки) ---
-@bot.channel_post_handler(content_types=['photo', 'video'])
-def handle_channel_post(message):
-    if message.chat.id != CHANNEL_ID or not saved_templates:
-        return
-
-    # Проверка: если это альбом (медиагруппа)
-    if message.media_group_id:
-        # Если мы уже обрабатываем этот альбом, пропускаем остальные фото из него,
-        # так как подпись в Telegram всегда привязана только к первому файлу альбома.
-        if message.media_group_id in processed_albums:
-            return
-        processed_albums.add(message.media_group_id)
-        
-        # Очищаем старые ID альбомов из памяти, чтобы она не переполнялась (храним последние 100)
-        if len(processed_albums) > 100:
-            processed_albums.pop()
-
-    links_header = ""
-    final_entities = []
-
-    # Склеиваем сохраненные анкоры столбиком
-    for template in saved_templates:
-        if template["text"]:
-            current_offset = len(links_header)
-            links_header += template["text"] + "\n"
+    if state["step"] == "waiting_log":
+        try:
+            log_id = int(message.text.strip())
+            token = state["temp_token"]
             
-            if template["entities"]:
-                for ent_dict in template["entities"]:
-                    ent = telebot.types.MessageEntity.de_json(ent_dict)
-                    ent.offset += current_offset
-                    final_entities.append(ent)
-                    
-    links_header += "\n" # Отступ перед основным текстом
-    
-    original_caption = message.caption if message.caption else ""
-    caption_offset = len(links_header)
-    final_caption = f"{links_header}{original_caption}"
-    
-    if message.caption_entities:
-        for ent in message.caption_entities:
-            ent.offset += caption_offset
-            final_entities.append(ent)
+            system_data["bots"][token] = {
+                "channel_id": state["temp_channel"],
+                "log_chat_id": log_id,
+                "admin_id": None, # Пока None, заполнится при первом клике на /start
+                "templates": []
+            }
+            
+            save_system_state()
+            update_child_log_report(token) 
+            start_child_bot_thread(token)
+            
+            del system_data["user_states"][user_id]
+            main_bot.reply_to(
+                message, 
+                "🎉 **Бот успешно добавлен в центральную сеть!**\n\n"
+                "**Финальный шаг авторизации:**\n"
+                "Перейдите в ЛС к созданному боту-сыну с того аккаунта, который должен им управлять, и нажмите там **`/start`**. Бот навсегда запомнит этот аккаунт как своего хозяина!"
+            )
+        except ValueError:
+            main_bot.reply_to(message, "ID лог-чата должно быть числом. Попробуйте еще раз:")
+        return
 
-    try:
-        # Редактируем подпись
-        bot.edit_message_caption(
-            chat_id=message.chat.id,
-            message_id=message.message_id,
-            caption=final_caption,
-            caption_entities=final_entities
-        )
-    except Exception as e:
-        print(f"Ошибка изменения поста в канале: {e}")
+    if state["step"] == "waiting_delete_token":
+        token = message.text.strip()
+        if token in system_data["bots"]:
+            del system_data["bots"][token]
+            save_system_state()
+            del system_data["user_states"][user_id]
+            main_bot.reply_to(message, "🗑️ Бот удален из базы.")
+        else:
+            main_bot.reply_to(message, "❌ Токен не найден.")
+        return
 
 
-
-# --- 6. ЗАПУСК ВСЕЙ СИСТЕМЫ ---
+# --- 6. ЗАПУСК СИСТЕМЫ ---
 if __name__ == "__main__":
+    load_and_start_system()
+    
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
+    
+    print("Центральный мультибот готов к работе!")
+    main_bot.infinity_polling(allowed_updates=["message"])
 
-    print("Бот успешно обновлен и запущен!")
-    bot.infinity_polling(allowed_updates=["message", "channel_post"])
