@@ -4,7 +4,7 @@ import threading
 import telebot
 from flask import Flask
 
-# --- 1. НАСТРОЙКА FLASK (Для прохождения проверки Render) ---
+# --- 1. НАСТРОЙКА FLASK (Для работы на бесплатном тарифе Render) ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -19,12 +19,12 @@ def run_flask():
 # --- 2. ГЛОБАЛЬНЫЕ НАСТРОЙКИ ГЛАВНОГО БОТА (ОТЦА) ---
 MAIN_BOT_TOKEN = os.getenv("BOT_TOKEN")  
 MAIN_ADMIN_ID = int(os.getenv("ADMIN_ID", 0))  
-MAIN_CHANNEL_ID = int(os.getenv("CHANNEL_ID", 0))  # Первый канал Отца
-MAIN_LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID"))   # Первый лог-чат Отца
+MAIN_CHANNEL_ID = int(os.getenv("CHANNEL_ID", 0))  # Первый канал Отца из секретов
+MAIN_LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID"))   # Первый лог-чат Отца из секретов
 
 main_bot = telebot.TeleBot(MAIN_BOT_TOKEN)
 
-# Структура базы данных в памяти
+# База данных системы в оперативной памяти
 system_data = {
     "main_templates": [], # Шаблоны анкоров лично для Первого канала Отца
     "bots": {},           # { TOKEN: {"channel_id": int, "log_chat_id": int, "admin_id": int/None, "templates": [...] } }
@@ -35,7 +35,7 @@ active_bot_instances = {}
 processed_albums = set()
 
 
-# --- 3. СИНХРОНИЗАЦИЯ ЧЕРЕЗ ТЕЛЕГРАМ ЧАТЫ ---
+# --- 3. СИНХРОНИЗАЦИЯ ЧЕРЕЗ ТЕЛЕГРАМ ЧАТЫ (Хранилище данных) ---
 def save_system_state():
     """Сохраняет структуру всей сети и шаблоны Отца в закреп лога Отца."""
     text_report = "👑 **ЦЕНТРАЛЬНАЯ СЕТЬ МУЛЬТИБОТОВ**\n\n"
@@ -121,10 +121,13 @@ def child_bot_worker(token):
         if not bot_config or message.chat.id != bot_config["channel_id"] or not bot_config["templates"]:
             return
 
+        # Умная защита от дублирования в альбомах (медиагруппах)
         if message.media_group_id:
-            if message.media_group_id in processed_albums: return
+            if message.media_group_id in processed_albums:
+                return
             processed_albums.add(message.media_group_id)
-            if len(processed_albums) > 200: processed_albums.clear()
+            if len(processed_albums) > 200:
+                processed_albums.clear()
 
         links_header = ""
         final_entities = []
@@ -138,6 +141,107 @@ def child_bot_worker(token):
                         ent = telebot.types.MessageEntity.de_json(ent_dict)
                         ent.offset += current_offset
                         final_entities.append(ent)
+                        
+        links_header += "\n"
+        original_caption = message.caption if message.caption else ""
+        caption_offset = len(links_header)
+        final_caption = f"{links_header}{original_caption}"
+        
+        if message.caption_entities:
+            for ent in message.caption_entities:
+                ent.offset += caption_offset
+                final_entities.append(ent)
+
+        try:
+            bot.edit_message_caption(
+                chat_id=message.chat.id, message_id=message.message_id,
+                caption=final_caption, caption_entities=final_entities
+            )
+        except Exception as e:
+            print(f"[{token[:5]}] Ошибка изменения поста: {e}")
+
+    @bot.message_handler(chat_types=['private'])
+    def handle_child_private(message):
+        bot_config = system_data["bots"].get(token)
+        if not bot_config: return
+
+        user_id = message.from_user.id
+
+        if message.text == "/start":
+            # Автоматическая привязка админа при первом старте
+            if not bot_config.get("admin_id"):
+                bot_config["admin_id"] = user_id
+                save_system_state()
+                update_child_log_report(token)
+                bot.reply_to(message, "👑 **Вы успешно авторизованы как хозяин этого бота!**\n\nОтправляйте мне анкоры для вашего канала.")
+                return
+            
+            if bot_config["admin_id"] != user_id:
+                bot.reply_to(message, "❌ У этого бота уже есть хозяин.")
+                return
+
+            bot.reply_to(message, f"🟢 Бот работает!\nКанал: `{bot_config['channel_id']}`\nСтрок в шапке: {len(bot_config['templates'])}", parse_mode="Markdown")
+            return
+
+        # Игнорируем всех, кроме хозяина конкретного бота
+        if bot_config.get("admin_id") != user_id:
+            return
+
+        if message.text == "/clear":
+            bot_config["templates"].clear()
+            save_system_state()
+            update_child_log_report(token)
+            bot.reply_to(message, "🗑️ Шапка этого канала очищена!")
+            return
+
+        bot_config["templates"].append({
+            "text": message.text,
+            "entities": [e.__dict__ for e in message.entities] if message.entities else []
+        })
+        save_system_state()
+        update_child_log_report(token)
+        bot.reply_to(message, f"✅ Анкор добавлен! Всего строк: {len(bot_config['templates'])}")
+
+    try:
+        bot.infinity_polling(allowed_updates=["message", "channel_post"])
+    except Exception as e:
+        print(f"Ошибка пуллинга бота {token[:5]}: {e}")
+
+def start_child_bot_thread(token):
+    if token in active_bot_instances: return
+    t = threading.Thread(target=child_bot_worker, args=(token,))
+    t.daemon = True
+    t.start()
+    active_bot_instances[token] = t
+
+
+# --- 5. ЛОГИКА ГЛАВНОГО БОТА (ОТЦА) ДЛЯ ОСНОВНОГО КАНАЛА И СЕТИ ---
+def is_main_admin(message):
+    return message.from_user.id == MAIN_ADMIN_ID
+
+# Отец сам обрабатывает свой основной канал из секретов Render
+@main_bot.channel_post_handler(content_types=['photo', 'video'])
+def handle_main_channel_post(message):
+    if message.chat.id != MAIN_CHANNEL_ID or not system_data["main_templates"]:
+        return
+
+    if message.media_group_id:
+        if message.media_group_id in processed_albums: return
+        processed_albums.add(message.media_group_id)
+        if len(processed_albums) > 200: processed_albums.clear()
+
+    links_header = ""
+    final_entities = []
+
+    for template in system_data["main_templates"]:
+        if template["text"]:
+            current_offset = len(links_header)
+            links_header += template["text"] + "\n"
+            if template["entities"]:
+                for ent_dict in template["entities"]:
+                                        ent = telebot.types.MessageEntity.de_json(ent_dict)
+                    ent.offset += current_offset
+                    final_entities.append(ent)
                         
         links_header += "\n"
         original_caption = message.caption if message.caption else ""
@@ -214,7 +318,6 @@ def start_child_bot_thread(token):
 def is_main_admin(message):
     return message.from_user.id == MAIN_ADMIN_ID
 
-# Отец сам обрабатывает свой основной канал из секретов Render
 @main_bot.channel_post_handler(content_types=['photo', 'video'])
 def handle_main_channel_post(message):
     if message.chat.id != MAIN_CHANNEL_ID or not system_data["main_templates"]:
@@ -240,7 +343,7 @@ def handle_main_channel_post(message):
                     
     links_header += "\n"
     original_caption = message.caption if message.caption else ""
-        caption_offset = len(links_header)
+    caption_offset = len(links_header)
     final_caption = f"{links_header}{original_caption}"
     
     if message.caption_entities:
@@ -371,7 +474,7 @@ def main_router(message):
         return
 
 
-# --- 6. ЗАПУСК ВСЕЙ СИСТЕМЫ ---
+# --- 6. ЗАПУСК ВСЕЙ СИСТЕМЫ ЧЕРЕЗ ДВА ПОТОКА ---
 if __name__ == "__main__":
     load_and_start_system()
     
