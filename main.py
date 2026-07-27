@@ -359,7 +359,8 @@ def main_router(message):
         except ValueError:
             main_bot.reply_to(message, "Ошибка! Нужен цифровой ID. Попробуйте еще раз:")
         return
-            if state["step"] == "waiting_delete_token":
+
+    if state["step"] == "waiting_delete_token":
         token = message.text.strip()
         if token in system_data["bots"]:
             del system_data["bots"][token]
@@ -370,7 +371,6 @@ def main_router(message):
             main_bot.reply_to(message, "❌ Токен не найден.")
         return
 
-
 if __name__ == "__main__":
     load_and_start_system()
     
@@ -380,6 +380,7 @@ if __name__ == "__main__":
     
     print("Центральный мультибот готов к работе!")
     main_bot.infinity_polling(allowed_updates=["message", "channel_post"])
+
 
                 
         
