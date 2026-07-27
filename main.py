@@ -4,7 +4,7 @@ import threading
 import telebot
 from flask import Flask
 
-# --- 1. НАСТРОЙКА FLASK (Для работы на бесплатном тарифе Render) ---
+# --- 1. НАСТРОЙКА FLASK (Для прохождения проверки Render) ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -238,8 +238,8 @@ def handle_main_channel_post(message):
             current_offset = len(links_header)
             links_header += template["text"] + "\n"
             if template["entities"]:
-                for ent_dict in template["entities"]:
-                                        ent = telebot.types.MessageEntity.de_json(ent_dict)
+                                for ent_dict in template["entities"]:
+                    ent = telebot.types.MessageEntity.de_json(ent_dict)
                     ent.offset += current_offset
                     final_entities.append(ent)
                         
@@ -474,7 +474,6 @@ def main_router(message):
         return
 
 
-# --- 6. ЗАПУСК ВСЕЙ СИСТЕМЫ ЧЕРЕЗ ДВА ПОТОКА ---
 if __name__ == "__main__":
     load_and_start_system()
     
@@ -485,3 +484,4 @@ if __name__ == "__main__":
     print("Центральный мультибот готов к работе!")
     main_bot.infinity_polling(allowed_updates=["message", "channel_post"])
 
+                    
