@@ -238,9 +238,10 @@ def load_and_start_system():
             threading.Thread(target=fix_missing_posts, args=(main_bot, MAIN_CHANNEL_ID, system_data["main_templates"]), daemon=True).start()
     except Exception as e:
         print(f"[Система] Ошибка полной регенерации памяти: {e}")
-    #--- 5. ДВИЖОК ДЛЯ БОТОВ-СЫНОВЕЙ ---
-    def child_bot_worker(token):
-        bot = telebot.TeleBot(token)
+        
+    # --- 5. ДВИЖОК ДЛЯ БОТОВ-СЫНОВЕЙ ---
+def child_bot_worker(token):
+    bot = telebot.TeleBot(token)
     
     @bot.channel_post_handler(content_types=['photo', 'video'])
     def handle_child_channel_post(message):
@@ -296,7 +297,7 @@ def load_and_start_system():
                 bot_config["admin_id"] = user_id
                 save_system_state()
                 update_child_log_report(token)
-                bot.reply_to(message, "👑 **Вы успешно авторизованы как хозяин этого BOA!**\n\nОтправляйте мне анкоры для вашего канала.")
+                bot.reply_to(message, "👑 **Вы успешно авторизованы как хозяин этого бота!**\n\nОтправляйте мне анкоры для вашего канала.")
                 return
             
             if bot_config["admin_id"] != user_id:
@@ -335,7 +336,6 @@ def start_child_bot_thread(token):
     t.daemon = True
     t.start()
     active_bot_instances[token] = t
-
 
 # --- 6. ЛОГИКА ГЛАВНОГО БОТА (ОТЦА) ДЛЯ ОСНОВНОГО КАНАЛА И СЕТИ ---
 def is_main_admin(message):
