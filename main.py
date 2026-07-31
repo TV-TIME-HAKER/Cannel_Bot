@@ -481,7 +481,7 @@ def main_router(message):
             
             del system_data["user_states"][user_id]
             main_bot.reply_to(message, "🎉 **Бот успешно добавлен в сеть!**\n\nПерейдите к нему в ЛС со второго аккаунта и нажмите `/start`.")
-                except ValueError:
+        except ValueError:
             main_bot.reply_to(message, "Ошибка! Нужен цифровой ID. Попробуйте еще раз:")
         return
 
