@@ -136,30 +136,37 @@ def fix_missing_posts(bot_instance, channel_id, templates):
         return
         
     try:
-        # Просим у Telegram последние 20 постов из канала
-        history = bot_instance.get_chat_history(chat_id=channel_id, limit=20)
-        
-        # Берем самый первый анкор из настроек, чтобы проверять его наличие в посте
-        first_anchor_text = templates[0]["text"]
-        
+        # Запрашиваем последние 50 постов для глубокой проверки истории
+        history = bot_instance.get_chat_history(chat_id=channel_id, limit=50)
+        if not history:
+            return
+
+        # Собираем список всех чистых текстов анкоров для проверки
+        anchor_texts = [t["text"] for t in templates if t.get("text")]
+        if not anchor_texts:
+            return
+
         for message in history:
-            # Нас интересуют только фото и видео с описанием (или вообще пустые)
+            # Проверяем только фото и видео
             if message.content_type in ['photo', 'video']:
                 current_caption = message.caption if message.caption else ""
                 
-                # Если нашего анкора НЕТ в тексте поста — значит, бот этот пост пропустил!
-                if first_anchor_text not in current_caption:
-                    print(f"[Фон] Найдено упущение в канале {channel_id}, пост №{message.message_id}. Исправляю...")
+                # Проверяем: есть ли ХОТЯ БЫ ОДИН наш анкор в тексте поста?
+                has_anchor = any(anchor in current_caption for anchor in anchor_texts)
+                
+                # Если анкоров нет — этот пост пропущен! Начинаем исправление
+                if not has_anchor:
+                    print(f"[Фон] Исправляю пропущенный пост №{message.message_id} в канале {channel_id}...")
                     
-                    # Генерируем шапку стандартным путем
                     links_header = ""
                     final_entities = []
 
+                    # Собираем шапку
                     for template in templates:
-                        if template["text"]:
+                        if template.get("text"):
                             current_offset = len(links_header)
                             links_header += template["text"] + "\n"
-                            if template["entities"]:
+                            if template.get("entities"):
                                 for ent_dict in template["entities"]:
                                     ent = telebot.types.MessageEntity.de_json(ent_dict)
                                     ent.offset += current_offset
@@ -176,36 +183,42 @@ def fix_missing_posts(bot_instance, channel_id, templates):
 
                     try:
                         bot_instance.edit_message_caption(
-                            chat_id=channel_id, message_id=message.message_id,
-                            caption=final_caption, caption_entities=final_entities
+                            chat_id=channel_id, 
+                            message_id=message.message_id,
+                            caption=final_caption, 
+                            caption_entities=final_entities
                         )
-                        # ВАЖНО: Делаем паузу в 4 секунды между постами, чтобы не перегружать хост и Telegram
-                        time.sleep(4)
+                        # Пауза 5 секунд, чтобы Telegram не заблокировал за флуд
+                        time.sleep(5)
                     except Exception as edit_err:
-                        print(f"[Фон] Не удалось отредактировать старый пост №{message.message_id}: {edit_err}")
+                        print(f"[Фон] Ошибка редактирования поста №{message.message_id}: {edit_err}")
+                        # Если поймали ограничение лимитов, отдыхаем чуть дольше
+                        time.sleep(10)
                         
     except Exception as e:
         print(f"[Фон] Ошибка при проверке истории канала {channel_id}: {e}")
 
 def run_background_fixer():
-    """Запускает проверку пропущенных постов для всех ботов раз в 10 минут."""
+    """Запускает циклическую проверку пропущенных постов для всей сети."""
+    # Даем системе 30 секунд при старте, чтобы все боты успели считать свои закрепы
+    time.sleep(30)
     while True:
         try:
-            # 1. Проверяем пропущенные посты основного канала (Отца)
-            if system_data["main_templates"] and MAIN_CHANNEL_ID:
+            # 1. Исправляем посты в основном канале Отца
+            if system_data.get("main_templates") and MAIN_CHANNEL_ID:
                 fix_missing_posts(main_bot, MAIN_CHANNEL_ID, system_data["main_templates"])
                 
-            # 2. Проверяем пропущенные посты у всех ботов-сыновей
-            for token, config in system_data["bots"].items():
+            # 2. Поочередно исправляем посты в каналах всех ботов-сыновей
+            for token, config in list(system_data.get("bots", {}).items()):
                 if config.get("templates") and config.get("channel_id"):
                     child_bot_temp = telebot.TeleBot(token)
                     fix_missing_posts(child_bot_temp, config["channel_id"], config["templates"])
                     
         except Exception as e:
-            print(f"[Фон] Ошибка в цикле фиксации постов: {e}")
+            print(f"[Фон] Ошибка в общем цикле фиксации: {e}")
             
-        # Ждем 10 минут (600 секунд) перед следующей автоматической проверкой каналов
-        time.sleep(600)
+        # Повторяем глобальный обход каналов каждые 5 минут
+        time.sleep(300)
 
 
 def load_and_start_system():
@@ -390,11 +403,11 @@ def main_welcome(message):
         "👑 **Панель Отца Ботов (Основной канал)**\n\n"
         "📜 **Управление шапкой Отца:**\n"
         "• Отправьте мне анкор в ЛС — он встанет в шапку вашего основного канала.\n"
-        "• Команда `/clear` — очистит шапку основного канала.\n\n"
+        "• Команда /clear — очистит шапку основного канала.\n\n"
         "🌐 **Управление другими ботами:**\n"
-        "➕ `/add_bot` — подключить нового бота в сеть\n"
-        "❌ `/delete_bot` — удалить бота из сети\n"
-        "📋 `/list` — список всех запущенных ботов\n",
+        "➕ /add_bot — подключить нового бота в сеть\n"
+        "❌ /delete_bot — удалить бота из сети\n"
+        "📋 /list — список всех запущенных ботов\n",
         parse_mode="Markdown"
     )
 
