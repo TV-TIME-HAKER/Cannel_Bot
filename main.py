@@ -481,17 +481,21 @@ def main_router(message):
             
             del system_data["user_states"][user_id]
             main_bot.reply_to(message, "🎉 **Бот успешно добавлен в сеть!**\n\nПерейдите к нему в ЛС со второго аккаунта и нажмите `/start`.")
-        except ValueError:
+                except ValueError:
             main_bot.reply_to(message, "Ошибка! Нужен цифровой ID. Попробуйте еще раз:")
         return
 
-if state["step"] == "waiting_delete_token":
+    if state["step"] == "waiting_delete_token":
         token = message.text.strip()
         if token in system_data["bots"]:
             del system_data["bots"][token]
             save_system_state()
+            del system_data["user_states"][user_id]
+            main_bot.reply_to(message, "🗑️ Бот удален из базы.")
+        else:
+            main_bot.reply_to(message, "❌ Токен не найден.")
+        return
 
-#--- 7. ЗАПУСК ВСЕЙ СИСТЕМЫ С ФОНОВЫМ ИСПРАВЛЕНИЕМ ПОСТОВ ---
 
 if __name__ == "__main__":
     load_and_start_system()
@@ -506,9 +510,3 @@ if __name__ == "__main__":
     
     print("Центральный мультибот полностью готов к работе и запущен!")
     main_bot.infinity_polling(allowed_updates=["message", "channel_post"])
-            del system_data["user_states"][user_id]
-            main_bot.reply_to(message, "🗑️ Бот удален из базы.")
-        else:
-            main_bot.reply_to(message, "❌ Токен не найден.")
-        return
-    
