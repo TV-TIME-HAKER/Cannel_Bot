@@ -238,7 +238,7 @@ def load_and_start_system():
             threading.Thread(target=fix_missing_posts, args=(main_bot, MAIN_CHANNEL_ID, system_data["main_templates"]), daemon=True).start()
     except Exception as e:
         print(f"[Система] Ошибка полной регенерации памяти: {e}")
-    --- 5. ДВИЖОК ДЛЯ БОТОВ-СЫНОВЕЙ ---
+    #--- 5. ДВИЖОК ДЛЯ БОТОВ-СЫНОВЕЙ ---
     def child_bot_worker(token):
         bot = telebot.TeleBot(token)
     @bot.channel_post_handler(content_types=['photo', 'video'])
@@ -491,6 +491,7 @@ if state["step"] == "waiting_delete_token":
             del system_data["bots"][token]
             save_system_state()
 
+#--- 7. ЗАПУСК ВСЕЙ СИСТЕМЫ С ФОНОВЫМ ИСПРАВЛЕНИЕМ ПОСТОВ ---
 
 if __name__ == "__main__":
     load_and_start_system()
