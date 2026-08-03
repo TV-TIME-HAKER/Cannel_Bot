@@ -52,7 +52,7 @@ def get_saved_msg_id():
 
 def save_system_state():
     """Сохраняет всю структуру сети в закреп лога Отца и прописывает ID в бота."""
-    text_report = "👑 **ЦЕНТРАЛЬНАЯ СЕТЬ МУЛЬТИБОТОВ**\n\n"
+    text_report = "👑 **ЦЕНТРАЛЬНАЯ СЕТЬ МУЛЬТИБОТОВ 1.1**\n\n"
     text_report += f"📝 Шаблонов Отца в шапке: {len(system_data['main_templates'])}\n"
     text_report += f"🤖 Дополнительных ботов в системе: {len(system_data['bots'])}\n\n"
     
@@ -136,8 +136,8 @@ def fix_missing_posts(bot_instance, channel_id, templates):
         return
         
     try:
-        # Запрашиваем последние 50 постов для глубокой проверки истории
-        history = bot_instance.get_chat_history(chat_id=channel_id, limit=50)
+        # Запрашиваем последние 70 постов для глубокой проверки истории
+        history = bot_instance.get_chat_history(chat_id=channel_id, limit=70)
         if not history:
             return
 
@@ -201,7 +201,7 @@ def fix_missing_posts(bot_instance, channel_id, templates):
 def run_background_fixer():
     """Запускает циклическую проверку пропущенных постов для всей сети."""
     # Даем системе 30 секунд при старте, чтобы все боты успели считать свои закрепы
-    time.sleep(30)
+    time.sleep(5)
     while True:
         try:
             # 1. Исправляем посты в основном канале Отца
@@ -217,8 +217,8 @@ def run_background_fixer():
         except Exception as e:
             print(f"[Фон] Ошибка в общем цикле фиксации: {e}")
             
-        # Повторяем глобальный обход каналов каждые 5 минут
-        time.sleep(300)
+        # Повторяем глобальный обход каналов каждые 2 минут
+        time.sleep(120)
 
 
 def load_and_start_system():
