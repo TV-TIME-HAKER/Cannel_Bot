@@ -136,38 +136,43 @@ def fix_missing_posts(bot_instance, channel_id, templates):
         return
         
     try:
-        # Запрашиваем последние 70 постов для глубокой проверки истории
-        history = bot_instance.get_chat_history(chat_id=channel_id, limit=70)
+        # Запрашиваем последние 50 постов для глубокой проверки истории
+        history = bot_instance.get_chat_history(chat_id=channel_id, limit=50)
         if not history:
             return
 
-        # Собираем список всех чистых текстов анкоров для проверки
         anchor_texts = [t["text"] for t in templates if t.get("text")]
         if not anchor_texts:
             return
 
+        # Локальный набор для отслеживания уже обработанных альбомов ВНУТРИ этой проверки
+        local_processed_albums = set()
+
         for message in history:
-            # Проверяем только фото и видео
             if message.content_type in ['photo', 'video']:
+                # Если это альбом и мы его уже обрабатывали в этом цикле — строго пропускаем
+                if message.media_group_id:
+                    if message.media_group_id in local_processed_albums:
+                        continue
+                    local_processed_albums.add(message.media_group_id)
+
                 current_caption = message.caption if message.caption else ""
                 
-                # Проверяем: есть ли ХОТЯ БЫ ОДИН наш анкор в тексте поста?
+                # Проверяем, есть ли ХОТЯ БЫ ОДИН наш анкор в тексте поста
                 has_anchor = any(anchor in current_caption for anchor in anchor_texts)
                 
-                # Если анкоров нет — этот пост пропущен! Начинаем исправление
                 if not has_anchor:
                     print(f"[Фон] Исправляю пропущенный пост №{message.message_id} в канале {channel_id}...")
                     
                     links_header = ""
                     final_entities = []
 
-                    # Собираем шапку
                     for template in templates:
                         if template.get("text"):
                             current_offset = len(links_header)
                             links_header += template["text"] + "\n"
                             if template.get("entities"):
-                                for ent_dict in template["entities"]:
+                                for ent_dict in template.get("entities"):
                                     ent = telebot.types.MessageEntity.de_json(ent_dict)
                                     ent.offset += current_offset
                                     final_entities.append(ent)
@@ -192,7 +197,6 @@ def fix_missing_posts(bot_instance, channel_id, templates):
                         time.sleep(5)
                     except Exception as edit_err:
                         print(f"[Фон] Ошибка редактирования поста №{message.message_id}: {edit_err}")
-                        # Если поймали ограничение лимитов, отдыхаем чуть дольше
                         time.sleep(10)
                         
     except Exception as e:
@@ -200,15 +204,12 @@ def fix_missing_posts(bot_instance, channel_id, templates):
 
 def run_background_fixer():
     """Запускает циклическую проверку пропущенных постов для всей сети."""
-    # Даем системе 30 секунд при старте, чтобы все боты успели считать свои закрепы
-    time.sleep(5)
+    time.sleep(30)
     while True:
         try:
-            # 1. Исправляем посты в основном канале Отца
             if system_data.get("main_templates") and MAIN_CHANNEL_ID:
                 fix_missing_posts(main_bot, MAIN_CHANNEL_ID, system_data["main_templates"])
                 
-            # 2. Поочередно исправляем посты в каналах всех ботов-сыновей
             for token, config in list(system_data.get("bots", {}).items()):
                 if config.get("templates") and config.get("channel_id"):
                     child_bot_temp = telebot.TeleBot(token)
@@ -217,40 +218,43 @@ def run_background_fixer():
         except Exception as e:
             print(f"[Фон] Ошибка в общем цикле фиксации: {e}")
             
-        # Повторяем глобальный обход каналов каждые 2 минут
-        time.sleep(120)
+        time.sleep(300)
 
-
-def load_and_start_system():
-    """Находит ID сообщения-базы через описание бота и восстанавливает ВСЁ."""
-    global system_data
-    db_msg_id = get_saved_msg_id()
-    
-    if not db_msg_id:
-        print("[Система] Сохраненная база данных в Telegram не найдена. Чистый запуск.")
+@main_bot.message_handler(commands=['check_missing'], chat_types=['private'])
+def main_check_missing(message):
+    if not is_main_admin(message): return
+    if not MAIN_CHANNEL_ID or not system_data["main_templates"]:
+        main_bot.reply_to(message, "Ошибка: Канал или шаблоны Отца не настроены.")
         return
 
+    main_bot.reply_to(message, "🔍 Начинаю сканирование последних 50 постов основного канала...")
+    
     try:
-        temp_msg = main_bot.forward_message(chat_id=MAIN_LOG_CHAT_ID, from_chat_id=MAIN_LOG_CHAT_ID, message_id=db_msg_id)
-        text = temp_msg.text
-        main_bot.delete_message(chat_id=MAIN_LOG_CHAT_ID, message_id=temp_msg.message_id)
+        history = main_bot.get_chat_history(chat_id=MAIN_CHANNEL_ID, limit=50)
+        anchor_texts = [t["text"] for t in system_data["main_templates"] if t.get("text")]
+        
+        missing_ids = []
+        local_processed = set()
 
-        if "--- СЛУЖЕБНЫЕ ДАННЫЕ ---" in text:
-            json_data = text.split("--- СЛУЖЕБНЫЕ ДАННЫЕ ---")[-1].strip().strip('`').strip()
-            parsed = json.loads(json_data)
+        for msg in history:
+            if msg.content_type in ['photo', 'video']:
+                if msg.media_group_id:
+                    if msg.media_group_id in local_processed: continue
+                    local_processed.add(msg.media_group_id)
+
+                caption = msg.caption if msg.caption else ""
+                if not any(anchor in caption for anchor in anchor_texts):
+                    missing_ids.append(f"Пост №{msg.message_id}")
+
+        if missing_ids:
+            res = "⚠️ **Найдены пропущенные постов без шапки:**\n\n" + "\n".join(missing_ids)
+            res += "\n\n_Фоновый фиксер исправит их автоматически в течение нескольких минут._"
+        else:
+            res = "✅ **Всё чисто!** Последние 50 постов проверены, во всех есть актуальная рекламная шапка."
             
-            system_data["main_templates"] = parsed.get("main_templates", [])
-            system_data["bots"] = parsed.get("bots", {})
-            
-            print(f"[Система] Успешно восстановлено ботов: {len(system_data['bots'])}")
-            
-            for token in system_data["bots"]:
-                start_child_bot_thread(token)
-                
-            # Сразу после восстановления памяти запускаем быструю разовую проверку пропущенного
-            threading.Thread(target=fix_missing_posts, args=(main_bot, MAIN_CHANNEL_ID, system_data["main_templates"]), daemon=True).start()
+        main_bot.reply_to(message, res, parse_mode="Markdown")
     except Exception as e:
-        print(f"[Система] Ошибка полной регенерации памяти: {e}")
+        main_bot.reply_to(message, f"❌ Ошибка сканирования: {e}")
         
     # --- 5. ДВИЖОК ДЛЯ БОТОВ-СЫНОВЕЙ ---
 def child_bot_worker(token):
@@ -328,6 +332,37 @@ def child_bot_worker(token):
             save_system_state()
             update_child_log_report(token)
             bot.reply_to(message, "🗑️ Шапка этого канала очищена!")
+            return
+        if message.text == "/check_missing":
+            if not bot_config.get("channel_id") or not bot_config["templates"]:
+                bot.reply_to(message, "Ошибка: Настройки этого бота пусты.")
+                return
+
+            bot.reply_to(message, "🔍 Сканирую историю этого канала...")
+            try:
+                history = bot.get_chat_history(chat_id=bot_config["channel_id"], limit=50)
+                anchor_texts = [t["text"] for t in bot_config["templates"] if t.get("text")]
+                
+                missing_ids = []
+                local_processed = set()
+
+                for msg in history:
+                    if msg.content_type in ['photo', 'video']:
+                        if msg.media_group_id:
+                            if msg.media_group_id in local_processed: continue
+                            local_processed.add(msg.media_group_id)
+
+                        caption = msg.caption if msg.caption else ""
+                        if not any(anchor in caption for anchor in anchor_texts):
+                            missing_ids.append(f"Пост №{msg.message_id}")
+
+                if missing_ids:
+                    res = "⚠️ **Пропущенные посты в этом канале:**\n\n" + "\n".join(missing_ids)
+                else:
+                    res = "✅ **Всё отлично!** В этом канале пропущенных постов не обнаружено."
+                bot.reply_to(message, res, parse_mode="Markdown")
+            except Exception as e:
+                bot.reply_to(message, f"Ошибка: {e}")
             return
 
         bot_config["templates"].append({
