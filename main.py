@@ -3,6 +3,7 @@ import json
 import threading
 import time
 import telebot
+from telebot import apihelper
 from flask import Flask
 
 # --- 1. НАСТРОЙКА FLASK (Для прохождения проверки Render) ---
@@ -137,7 +138,8 @@ def fix_missing_posts(bot_instance, channel_id, templates):
         
     try:
         # Запрашиваем последние 50 постов для глубокой проверки истории
-        history = bot_instance.get_chat_history(chat_id=channel_id, limit=50)
+        raw_history = apihelper.get_chat_history(bot_instance.token, chat_id=channel_id, limit=50)
+        history = [telebot.types.Message.de_json(msg) for msg in raw_history]
         if not history:
             return
 
@@ -230,8 +232,9 @@ def main_check_missing(message):
     main_bot.reply_to(message, "🔍 Начинаю сканирование последних 50 постов основного канала...")
     
     try:
-        history = main_bot.get_chat_history(chat_id=MAIN_CHANNEL_ID, limit=50)
-        anchor_texts = [t["text"] for t in system_data["main_templates"] if t.get("text")]
+        raw_history = apihelper.get_chat_history(bot.token, chat_id=bot_config["channel_id"], limit=50)
+        history = [telebot.types.Message.de_json(msg) for msg in raw_history]
+        anchor_texts = [t["text"] for t in bot_config["templates"] if t.get("text")]
         
         missing_ids = []
         local_processed = set()
@@ -471,7 +474,8 @@ def main_check_missing(message):
     main_bot.reply_to(message, "🔍 Начинаю сканирование последних 50 постов основного канала...")
     
     try:
-        history = main_bot.get_chat_history(chat_id=MAIN_CHANNEL_ID, limit=50)
+        raw_history = apihelper.get_chat_history(main_bot.token, chat_id=MAIN_CHANNEL_ID, limit=50)
+        history = [telebot.types.Message.de_json(msg) for msg in raw_history]
         anchor_texts = [t["text"] for t in system_data["main_templates"] if t.get("text")]
         
         missing_ids = []
