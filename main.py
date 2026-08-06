@@ -550,29 +550,6 @@ def main_router(message):
             main_bot.reply_to(message, "Ошибка! Нужен цифровой ID. Попробуйте еще раз:")
         return
 
-    if state["step"] == "waiting_log":
-        try:
-            log_id = int(message.text.strip())
-            token = state["temp_token"]
-            
-            system_data["bots"][token] = {
-                "channel_id": state["temp_channel"],
-                "log_chat_id": log_id,
-                "admin_id": None,
-                "child_msg_id": None,
-                "templates": []
-            }
-            
-            save_system_state()
-            update_child_log_report(token) 
-            start_child_bot_thread(token)
-            
-            del system_data["user_states"][user_id]
-            main_bot.reply_to(message, "🎉 **Бот успешно добавлен в сеть!**\n\nПерейдите к нему в ЛС со второго аккаунта и нажмите `/start`.")
-        except ValueError:
-            main_bot.reply_to(message, "Ошибка! Нужен цифровой ID. Попробуйте еще раз:")
-        return
-
     if state["step"] == "waiting_delete_token":
         token = message.text.strip()
         if token in system_data["bots"]:
@@ -583,6 +560,38 @@ def main_router(message):
         else:
             main_bot.reply_to(message, "❌ Токен не найден.")
         return
+
+
+def load_and_start_system():
+    """Находит ID сообщения-базы через описание бота и восстанавливает ВСЁ."""
+    global system_data
+    db_msg_id = get_saved_msg_id()
+    
+    if not db_msg_id:
+        print("[Система] Сохраненная база данных в Telegram не найдена. Чистый запуск.")
+        return
+
+    try:
+        temp_msg = main_bot.forward_message(chat_id=MAIN_LOG_CHAT_ID, from_chat_id=MAIN_LOG_CHAT_ID, message_id=db_msg_id)
+        text = temp_msg.text
+        main_bot.delete_message(chat_id=MAIN_LOG_CHAT_ID, message_id=temp_msg.message_id)
+
+        if "--- СЛУЖЕБНЫЕ ДАННЫЕ ---" in text:
+            json_data = text.split("--- СЛУЖЕБНЫЕ ДАННЫЕ ---")[-1].strip().strip('`').strip()
+            parsed = json.loads(json_data)
+            
+            system_data["main_templates"] = parsed.get("main_templates", [])
+            system_data["bots"] = parsed.get("bots", {})
+            
+            print(f"[Система] Успешно восстановлено ботов: {len(system_data['bots'])}")
+            
+            for token in system_data["bots"]:
+                start_child_bot_thread(token)
+                
+            # Сразу после восстановления памяти запускаем быструю разовую проверку пропущенного
+            threading.Thread(target=fix_missing_posts, args=(main_bot, MAIN_CHANNEL_ID, system_data["main_templates"]), daemon=True).start()
+    except Exception as e:
+        print(f"[Система] Ошибка полной регенерации памяти: {e}")
 
 
 if __name__ == "__main__":
