@@ -438,11 +438,12 @@ def main_welcome(message):
         "👑 **Панель Отца Ботов (Основной канал)**\n\n"
         "📜 **Управление шапкой Отца:**\n"
         "• Отправьте мне анкор в ЛС — он встанет в шапку вашего основного канала.\n"
-        "• Команда /clear — очистит шапку основного канала.\n\n"
+        "• Команда `/clear` — очистит шапку основного канала.\n"
+        "• Команда `/check_missing` — проверить пропущенные посты.\n\n"
         "🌐 **Управление другими ботами:**\n"
-        "➕ /add_bot — подключить нового бота в сеть\n"
-        "❌ /delete_bot — удалить бота из сети\n"
-        "📋 /list — список всех запущенных ботов\n",
+        "➕ `/add_bot` — подключить нового бота в сеть\n"
+        "❌ `/delete_bot` — удалить бота из сети\n"
+        "📋 `/list` — список всех запущенных ботов\n",
         parse_mode="Markdown"
     )
 
@@ -457,6 +458,42 @@ def main_list(message):
         admin_info = f"`{info['admin_id']}`" if info.get("admin_id") else "_Ожидает активации_"
         res += f"🤖 `{token[:10]}...`\n├ Канал: `{info['channel_id']}`\n└ Admin: {admin_info}\n\n"
     main_bot.reply_to(message, res, parse_mode="Markdown")
+
+@main_bot.message_handler(commands=['check_missing'], chat_types=['private'])
+def main_check_missing(message):
+    if not is_main_admin(message): return
+    if not MAIN_CHANNEL_ID or not system_data["main_templates"]:
+        main_bot.reply_to(message, "Ошибка: Канал или шаблоны Отца не настроены.")
+        return
+
+    main_bot.reply_to(message, "🔍 Начинаю сканирование последних 50 постов основного канала...")
+    
+    try:
+        history = main_bot.get_chat_history(chat_id=MAIN_CHANNEL_ID, limit=50)
+        anchor_texts = [t["text"] for t in system_data["main_templates"] if t.get("text")]
+        
+        missing_ids = []
+        local_processed = set()
+
+        for msg in history:
+            if msg.content_type in ['photo', 'video']:
+                if msg.media_group_id:
+                    if msg.media_group_id in local_processed: continue
+                    local_processed.add(msg.media_group_id)
+
+                caption = msg.caption if msg.caption else ""
+                if not any(anchor in caption for anchor in anchor_texts):
+                    missing_ids.append(f"Пост №{msg.message_id}")
+
+        if missing_ids:
+            res = "⚠️ **Найдены пропущенные посты без шапки:**\n\n" + "\n".join(missing_ids)
+            res += "\n\n_Фоновый фиксер исправит их автоматически в течение нескольких минут._"
+        else:
+            res = "✅ **Всё чисто!** Последние 50 постов проверены, во всех есть актуальная рекламная шапка."
+            
+        main_bot.reply_to(message, res, parse_mode="Markdown")
+    except Exception as e:
+        main_bot.reply_to(message, f"❌ Ошибка сканирования: {e}")
 
 @main_bot.message_handler(commands=['add_bot'], chat_types=['private'])
 def main_add_bot(message):
