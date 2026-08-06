@@ -256,7 +256,7 @@ def main_check_missing(message):
     except Exception as e:
         main_bot.reply_to(message, f"❌ Ошибка сканирования: {e}")
         
-    # --- 5. ДВИЖОК ДЛЯ БОТОВ-СЫНОВЕЙ ---
+# --- 5. ДВИЖОК ДЛЯ БОТОВ-СЫНОВЕЙ ---
 def child_bot_worker(token):
     bot = telebot.TeleBot(token)
     
@@ -333,6 +333,7 @@ def child_bot_worker(token):
             update_child_log_report(token)
             bot.reply_to(message, "🗑️ Шапка этого канала очищена!")
             return
+
         if message.text == "/check_missing":
             if not bot_config.get("channel_id") or not bot_config["templates"]:
                 bot.reply_to(message, "Ошибка: Настройки этого бота пусты.")
@@ -365,6 +366,7 @@ def child_bot_worker(token):
                 bot.reply_to(message, f"Ошибка: {e}")
             return
 
+        # Добавление анкора (срабатывает, если не ввели команды)
         bot_config["templates"].append({
             "text": message.text,
             "entities": [e.__dict__ for e in message.entities] if message.entities else []
