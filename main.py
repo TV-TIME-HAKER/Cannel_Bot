@@ -138,7 +138,7 @@ def fix_missing_posts(bot_instance, channel_id, templates):
         
     try:
         # Запрашиваем последние 50 постов для глубокой проверки истории
-        raw_history = apihelper.get_chat_history(bot_instance.token, chat_id=channel_id, limit=50)
+        raw_history = apihelper.get_history(bot_instance.token, chat_id=channel_id, limit=50)
         history = [telebot.types.Message.de_json(msg) for msg in raw_history]
         if not history:
             return
@@ -344,7 +344,7 @@ def child_bot_worker(token):
 
             bot.reply_to(message, "🔍 Сканирую историю этого канала...")
             try:
-                history = bot.get_chat_history(chat_id=bot_config["channel_id"], limit=50)
+                history = apihelper.get_history(bot.token, chat_id=bot_config["channel_id"], limit=50)
                 anchor_texts = [t["text"] for t in bot_config["templates"] if t.get("text")]
                 
                 missing_ids = []
@@ -474,7 +474,7 @@ def main_check_missing(message):
     main_bot.reply_to(message, "🔍 Начинаю сканирование последних 50 постов основного канала...")
     
     try:
-        raw_history = apihelper.get_chat_history(main_bot.token, chat_id=MAIN_CHANNEL_ID, limit=50)
+        raw_history = apihelper.get_history(main_bot.token, chat_id=MAIN_CHANNEL_ID, limit=50)
         history = [telebot.types.Message.de_json(msg) for msg in raw_history]
         anchor_texts = [t["text"] for t in system_data["main_templates"] if t.get("text")]
         
